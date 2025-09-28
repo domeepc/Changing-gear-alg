@@ -59,12 +59,6 @@ jobs:
             sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
           fi
 
-      - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ runner.os }}-${{ matrix.name }}-ccache
-          max-size: "2G"
-
       - name: Cache CMake build
         uses: actions/cache@v4
         with:
@@ -80,25 +74,17 @@ jobs:
 
       - name: Build
         run: |
-          # Setup ccache
-          export PATH="/usr/lib/ccache:$PATH"
-          export CC="ccache ${{ matrix.cc }}"
-          export CXX="ccache ${{ matrix.cxx }}"
-
           mkdir build-${{ matrix.name }}
           cd build-${{ matrix.name }}
 
           if [ "${{ matrix.arch }}" != "amd64" ]; then
-            cmake .. -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"
+            cmake .. -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
           else
-            cmake .. -DCMAKE_C_COMPILER="ccache gcc" -DCMAKE_CXX_COMPILER="ccache g++"
+            cmake ..
           fi
 
           make -j$(nproc)  # Use all available cores
           ls -la  # Show what was built
-
-          # Show ccache stats
-          ccache -s
 
           # Rename binary to include architecture
           if [ -f "changing_gear_alg" ]; then

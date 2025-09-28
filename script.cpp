@@ -11,10 +11,11 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <thread>
 
 namespace Config {
 const double MAXIMUM_UPSHIFT_RPM = 13500.0;
-const double SAMPLE_TIME = 0.1;  // Faster sampling for better responsiveness
+const double SAMPLE_TIME = 0.1;
 const double ALPHA_RPM = 0.2;
 const double ALPHA_DOT = 0.2;
 const double ALPHA_DDOT = 0.15;
@@ -23,8 +24,7 @@ const double PREDICTIVE_TIME = 0.08;
 // CAN Configuration
 const char* CAN_INTERFACE = "vcan0";
 const canid_t RPM_CAN_ID = 0x123;
-const double RPM_SCALE_FACTOR = 1.0;  // Scale factor to convert raw data to RPM
-const bool ENABLE_CAN_DEBUG = true;   // Enable debug output
+const double RPM_SCALE_FACTOR = 1.0;
 
 }  // namespace Config
 
@@ -141,10 +141,6 @@ double CAN::getCurrentRPM() {
     if (frame.can_dlc >= 2) {
       uint16_t rawRPM = (frame.data[0] << 8) | frame.data[1];
       currentRPM = rawRPM * Config::RPM_SCALE_FACTOR;
-
-      if (Config::ENABLE_CAN_DEBUG) {
-        std::cout << "RPM: " << currentRPM << std::endl;
-      }
     }
   }
 
@@ -181,6 +177,22 @@ double EMAFilter::PredictRPM(double dt) {
 
 void EMAFilter::filterValues(int currentRPM) {
   using namespace Config;
+
+  static bool initialized = false;
+
+  if (!initialized && currentRPM > 0) {
+    filteredRPM = currentRPM;
+    previousRPM = currentRPM;
+    filteredDot = 0.0;
+    previousDot = 0.0;
+    filteredDDot = 0.0;
+    initialized = true;
+    return;
+  }
+
+  if (!initialized) {
+    return;  // Skip filtering until we have a valid initial RPM
+  }
 
   filteredRPM = ALPHA_RPM * currentRPM + (1 - ALPHA_RPM) * filteredRPM;
 
@@ -241,9 +253,10 @@ void CanInterface::run() {
 
     setPredictedRPM(EMA.PredictRPM(Config::PREDICTIVE_TIME));
 
-    std::cout << "Current RPM: " << CanBUS.getCurrentRPM()
-              << ", Filtered RPM: " << EMA.getFilteredRPM()
-              << ", Predicted RPM: " << getPredictedRPM() << std::endl;
+    if (CanBUS.getCurrentRPM() != 0) {
+      std::cout << "Current RPM: " << CanBUS.getCurrentRPM()
+                << " | Predicted RPM: " << getPredictedRPM() << std::endl;
+    }
 
     // Only print and play sound once when threshold is reached
     if (getPredictedRPM() >= Config::MAXIMUM_UPSHIFT_RPM &&
@@ -257,6 +270,9 @@ void CanInterface::run() {
     if (getPredictedRPM() < Config::MAXIMUM_UPSHIFT_RPM) {
       upshiftSoundPlayed = false;
     }
+
+    // Sleep for a short duration to prevent busy-waiting
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 }
 

@@ -14,6 +14,21 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            cc: gcc
+            cxx: g++
+            name: linux-x64
+          - arch: arm64
+            cc: aarch64-linux-gnu-gcc
+            cxx: aarch64-linux-gnu-g++
+            name: linux-arm64
+          - arch: armhf
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            name: linux-armhf
 
     steps:
       - name: Checkout code
@@ -24,41 +39,76 @@ jobs:
         with:
           cmake-version: "3.21.2"
 
+      - name: Install cross-compilation tools
+        if: matrix.arch != 'amd64'
+        run: |
+          sudo apt-get update
+          if [ "${{ matrix.arch }}" == "arm64" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          elif [ "${{ matrix.arch }}" == "armhf" ]; then
+            sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+          fi
+
       - name: Build
         run: |
-          mkdir build
-          cd build
-          cmake ..
+          mkdir build-${{ matrix.name }}
+          cd build-${{ matrix.name }}
+
+          if [ "${{ matrix.arch }}" != "amd64" ]; then
+            cmake .. -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          else
+            cmake ..
+          fi
+
           make
           ls -la  # Show what was built
+
+          # Rename binary to include architecture
+          if [ -f "changing_gear_alg" ]; then
+            mv changing_gear_alg changing_gear_alg-${{ matrix.name }}
+            file changing_gear_alg-${{ matrix.name }}
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: changing_gear_alg-${{ matrix.name }}
+          path: build-${{ matrix.name }}/changing_gear_alg-${{ matrix.name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          find artifacts -type f -ls
 
       - name: Create Release
         run: |
           echo "GITHUB_REF: $GITHUB_REF"
-          echo "Current directory: $(pwd)"
-          echo "Build directory contents:"
-          ls -la build/ || echo "Build directory not found"
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          echo "Creating release for tag: $TAG_NAME"
 
-          if [[ $GITHUB_REF == refs/tags/* ]]; then
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-            echo "Creating release for tag: $TAG_NAME"
-            
-            # Check if the binary exists
-            if [ -f "build/changing_gear_alg" ]; then
-              echo "Found binary: build/changing_gear_alg"
-              gh release create "$TAG_NAME" \
-                --title "Release $TAG_NAME" \
-                --notes "Release of version $TAG_NAME. Includes compiled binary for Linux x64." \
-                build/changing_gear_alg src/script.cpp
-            else
-              echo "Binary not found, creating release with source only"
-              gh release create "$TAG_NAME" \
-                --title "Release $TAG_NAME" \
-                --notes "Release of version $TAG_NAME" \
-                src/script.cpp
-            fi
-          else
-            echo "Not a tag push, skipping release creation"
-          fi
+          # Create release with all binaries
+          gh release create "$TAG_NAME" \
+            --title "Release $TAG_NAME" \
+            --notes "Release of version $TAG_NAME. Includes compiled binaries for:
+          - Linux x64 (Intel/AMD 64-bit)
+          - Linux ARM64 (64-bit ARM)
+          - Linux ARMHF (32-bit ARM with hardware floating point)
+
+          Download the appropriate binary for your system architecture." \
+            artifacts/*/changing_gear_alg-* src/script.cpp
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

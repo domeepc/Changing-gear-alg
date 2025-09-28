@@ -7,6 +7,10 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,12 +33,31 @@ jobs:
 
       - name: Create Release
         run: |
+          echo "GITHUB_REF: $GITHUB_REF"
+          echo "Current directory: $(pwd)"
+          echo "Build directory contents:"
+          ls -la build/ || echo "Build directory not found"
+
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             TAG_NAME=${GITHUB_REF#refs/tags/}
-            gh release create "$TAG_NAME" \
-              --title "Release $TAG_NAME" \
-              --notes "Release of version $TAG_NAME" \
-              build/* src/script.cpp
+            echo "Creating release for tag: $TAG_NAME"
+            
+            # Check if any files exist to attach
+            if ls build/* >/dev/null 2>&1; then
+              echo "Found build files"
+              gh release create "$TAG_NAME" \
+                --title "Release $TAG_NAME" \
+                --notes "Release of version $TAG_NAME" \
+                build/* src/script.cpp
+            else
+              echo "No build files found, creating release with source only"
+              gh release create "$TAG_NAME" \
+                --title "Release $TAG_NAME" \
+                --notes "Release of version $TAG_NAME" \
+                src/script.cpp
+            fi
+          else
+            echo "Not a tag push, skipping release creation"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

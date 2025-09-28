@@ -30,6 +30,7 @@ jobs:
           cd build
           cmake ..
           make
+          ls -la  # Show what was built
 
       - name: Create Release
         run: |
@@ -42,15 +43,15 @@ jobs:
             TAG_NAME=${GITHUB_REF#refs/tags/}
             echo "Creating release for tag: $TAG_NAME"
             
-            # Check if any files exist to attach
-            if ls build/* >/dev/null 2>&1; then
-              echo "Found build files"
+            # Check if the binary exists
+            if [ -f "build/changing_gear_alg" ]; then
+              echo "Found binary: build/changing_gear_alg"
               gh release create "$TAG_NAME" \
                 --title "Release $TAG_NAME" \
-                --notes "Release of version $TAG_NAME" \
-                build/* src/script.cpp
+                --notes "Release of version $TAG_NAME. Includes compiled binary for Linux x64." \
+                build/changing_gear_alg src/script.cpp
             else
-              echo "No build files found, creating release with source only"
+              echo "Binary not found, creating release with source only"
               gh release create "$TAG_NAME" \
                 --title "Release $TAG_NAME" \
                 --notes "Release of version $TAG_NAME" \

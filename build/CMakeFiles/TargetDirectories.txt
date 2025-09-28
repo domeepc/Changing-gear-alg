@@ -1,3 +1,0 @@
-/home/dome/Documents/Changing-gear-alg/build/CMakeFiles/changing_gear_alg.dir
-/home/dome/Documents/Changing-gear-alg/build/CMakeFiles/edit_cache.dir
-/home/dome/Documents/Changing-gear-alg/build/CMakeFiles/rebuild_cache.dir

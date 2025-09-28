@@ -14,22 +14,17 @@
 
 namespace Config {
 const double MAXIMUM_UPSHIFT_RPM = 13500.0;
-const double SAMPLE_TIME = 0.5;
+const double SAMPLE_TIME = 0.1;  // Faster sampling for better responsiveness
 const double ALPHA_RPM = 0.2;
 const double ALPHA_DOT = 0.2;
 const double ALPHA_DDOT = 0.15;
 const double PREDICTIVE_TIME = 0.08;
 
 // CAN Configuration
-const char* CAN_INTERFACE = "vcan0";  // Default CAN interface
-const canid_t RPM_CAN_ID = 0x123;     // CAN ID for RPM data (adjust as needed)
-const int RPM_BYTE_OFFSET = 0;        // Byte offset in CAN message for RPM data
+const char* CAN_INTERFACE = "vcan0";
+const canid_t RPM_CAN_ID = 0x123;
 const double RPM_SCALE_FACTOR = 1.0;  // Scale factor to convert raw data to RPM
-
-// Debug and parsing options
-const bool ENABLE_CAN_DEBUG = true;  // Enable detailed CAN message debugging
-const bool USE_32BIT_RPM =
-    false;  // Set to true if RPM is 32-bit instead of 16-bit
+const bool ENABLE_CAN_DEBUG = true;   // Enable debug output
 
 }  // namespace Config
 
@@ -53,9 +48,6 @@ class CAN {
 
   // Setters
   void setCurrentRPM(double rpm) { currentRPM = rpm; }
-
-  // Utility
-  bool isCANConnected() const { return isConnected; }
 };
 
 void CAN::PlayUpshiftSound() {
@@ -145,37 +137,13 @@ double CAN::getCurrentRPM() {
 
   // Check if this is the RPM message we're looking for
   if (frame.can_id == Config::RPM_CAN_ID) {
-    // Debug: Print raw CAN frame data
-    if (Config::ENABLE_CAN_DEBUG) {
-      std::cout << "CAN ID: 0x" << std::hex << frame.can_id << std::dec
-                << ", DLC: " << (int)frame.can_dlc << ", Data: ";
-      for (int i = 0; i < frame.can_dlc; i++) {
-        printf("%02X ", frame.data[i]);
-      }
-      std::cout << std::endl;
-    }
+    // Simple 16-bit RPM extraction from first two bytes (big-endian)
+    if (frame.can_dlc >= 2) {
+      uint16_t rawRPM = (frame.data[0] << 8) | frame.data[1];
+      currentRPM = rawRPM * Config::RPM_SCALE_FACTOR;
 
-    // Extract RPM data based on configuration
-    if (Config::USE_32BIT_RPM && frame.can_dlc >= Config::RPM_BYTE_OFFSET + 4) {
-      // 32-bit RPM parsing (big-endian)
-      uint32_t rawRPM32 = (frame.data[Config::RPM_BYTE_OFFSET] << 24) |
-                          (frame.data[Config::RPM_BYTE_OFFSET + 1] << 16) |
-                          (frame.data[Config::RPM_BYTE_OFFSET + 2] << 8) |
-                          frame.data[Config::RPM_BYTE_OFFSET + 3];
-
-      currentRPM = rawRPM32 * Config::RPM_SCALE_FACTOR;
       if (Config::ENABLE_CAN_DEBUG) {
-        std::cout << "Raw RPM (32-bit): " << rawRPM32
-                  << ", Scaled: " << currentRPM << std::endl;
-      }
-    } else if (frame.can_dlc >= Config::RPM_BYTE_OFFSET + 2) {
-      // 16-bit RPM parsing (big-endian)
-      uint16_t rawRPM16 = (frame.data[Config::RPM_BYTE_OFFSET] << 8) |
-                          frame.data[Config::RPM_BYTE_OFFSET + 1];
-
-      currentRPM = rawRPM16 * Config::RPM_SCALE_FACTOR;
-      if (Config::ENABLE_CAN_DEBUG) {
-        std::cout << currentRPM << std::endl;
+        std::cout << "RPM: " << currentRPM << std::endl;
       }
     }
   }
@@ -189,23 +157,13 @@ class EMAFilter {
   double filteredDDot;
   double previousRPM;
   double previousDot;
-  double previousTime;
 
  public:
   EMAFilter();
   double PredictRPM(double dt);
   double getFilteredRPM() { return filteredRPM; }
-  double getFilteredDot() { return filteredDot; }
-  double getFilteredDDot() { return filteredDDot; }
-  double getPreviousRPM() { return previousRPM; }
-  double getPreviousDot() { return previousDot; }
-  double getPreviousTime() { return previousTime; }
-  void setFilteredRPM(double rpm) { filteredRPM = rpm; }
-  void setFilteredDot(double dot) { filteredDot = dot; }
-  void setFilteredDDot(double ddot) { filteredDDot = ddot; }
   void setPreviousRPM(double rpm) { previousRPM = rpm; }
   void setPreviousDot(double dot) { previousDot = dot; }
-  void setPreviousTime(double time) { previousTime = time; }
   void filterValues(int currentRPM);
 };
 
@@ -215,7 +173,6 @@ EMAFilter::EMAFilter() {
   filteredDot = 0.0;
   previousRPM = 0.0;
   previousDot = 0.0;
-  previousTime = 0.0;
 }
 
 double EMAFilter::PredictRPM(double dt) {
@@ -265,23 +222,23 @@ CanInterface::CanInterface() {
 void CanInterface::run() {
   std::cout << "Starting CAN interface" << std::endl;
 
+  auto lastSampleTime = std::chrono::steady_clock::now();
+
   while (true) {
     auto currentTime = std::chrono::steady_clock::now();
-    auto timeElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           currentTime.time_since_epoch())
-                           .count();
+    auto timeSinceLastSample =
+        std::chrono::duration_cast<std::chrono::milliseconds>(currentTime -
+                                                              lastSampleTime)
+            .count();
 
-    EMA.setPreviousTime(timeElapsed);
+    if (timeSinceLastSample >= Config::SAMPLE_TIME * 1000) {
+      // Read current RPM from CAN bus and filter the values
+      EMA.filterValues(CanBUS.getCurrentRPM());
 
-    if (timeElapsed - EMA.getPreviousTime() >= Config::SAMPLE_TIME * 1000) {
-      // Read current RPM from CAN bus
-      double currentRpmValue = CanBUS.getCurrentRPM();
-
-      // Update the CAN object's RPM value
-      CanBUS.setCurrentRPM(currentRpmValue);
+      // Update last sample time
+      lastSampleTime = currentTime;
     }
 
-    EMA.filterValues(CanBUS.getCurrentRPM());
     setPredictedRPM(EMA.PredictRPM(Config::PREDICTIVE_TIME));
 
     std::cout << "Current RPM: " << CanBUS.getCurrentRPM()

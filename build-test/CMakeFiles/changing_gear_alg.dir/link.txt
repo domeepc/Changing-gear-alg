@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/changing_gear_alg.dir/link.d CMakeFiles/changing_gear_alg.dir/src/script.cpp.o -o changing_gear_alg

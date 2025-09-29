@@ -1,0 +1,3 @@
+/home/runner/work/Changing-gear-alg/Changing-gear-alg/build-test/CMakeFiles/changing_gear_alg.dir
+/home/runner/work/Changing-gear-alg/Changing-gear-alg/build-test/CMakeFiles/edit_cache.dir
+/home/runner/work/Changing-gear-alg/Changing-gear-alg/build-test/CMakeFiles/rebuild_cache.dir

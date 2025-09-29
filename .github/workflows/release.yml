@@ -74,7 +74,7 @@ jobs:
 
       - name: Build
         run: |
-          mkdir build-${{ matrix.name }}
+          mkdir -p build-${{ matrix.name }}
           cd build-${{ matrix.name }}
 
           if [ "${{ matrix.arch }}" != "amd64" ]; then
@@ -128,7 +128,7 @@ jobs:
             --title "Release $TAG_NAME" \
             --notes "Release of version $TAG_NAME. Includes compiled binaries for:
           - Linux x64 (Intel/AMD 64-bit)
-          - Linux ARM64 (64-bit ARM)
+          - Linux ARM64 (64-bit ARM - compatible with Raspberry Pi OS 64-bit)
           - Linux ARMHF (32-bit ARM with hardware floating point)
 
           Download the appropriate binary for your system architecture." \

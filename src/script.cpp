@@ -51,6 +51,7 @@ class CAN {
 };
 
 void CAN::PlayUpshiftSound() {
+system("(speaker-test -t sine -f 1000) > /dev/null 2>&1  & pid=$!; sleep 1.0s; kill -9 $pid");
   std::cout << "Playing upshift sound!" << std::endl;
 }
 

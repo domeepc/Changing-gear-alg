@@ -16,11 +16,11 @@
 namespace Config {
 const double MAXIMUM_UPSHIFT_RPM = 13500.0;
 const double MINIMUM_DOWNSHIFT_RPM = 2000.0;
-const double SAMPLE_TIME = 0.1;
-const double ALPHA_RPM = 0.2;
-const double ALPHA_DOT = 0.2;
-const double ALPHA_DDOT = 0.15;
-const double PREDICTIVE_TIME = 0.08;
+const double SAMPLE_TIME = 0.05;
+const double ALPHA_RPM = 0.7;
+const double ALPHA_DOT = 0.5;
+const double ALPHA_DDOT = 0.3;
+const double PREDICTIVE_TIME = 0.15;
 
 // CAN Configuration
 const char* CAN_INTERFACE = "vcan0";
@@ -165,6 +165,7 @@ class EMAFilter {
   double filteredDDot;
   double previousRPM;
   double previousDot;
+  bool initialized;
 
  public:
   EMAFilter();
@@ -182,16 +183,17 @@ EMAFilter::EMAFilter() {
   filteredDot = 0.0;
   previousRPM = 0.0;
   previousDot = 0.0;
+  initialized = false;
 }
 
 double EMAFilter::PredictRPM(double dt) {
+  if (!initialized) return 0.0;
+
   return filteredRPM + filteredDot * dt + 0.5 * filteredDDot * (dt * dt);
 }
 
 void EMAFilter::filterValues(int currentRPM) {
   using namespace Config;
-
-  static bool initialized = false;
 
   if (!initialized && currentRPM > 0) {
     filteredRPM = currentRPM;
@@ -209,7 +211,7 @@ void EMAFilter::filterValues(int currentRPM) {
 
   filteredRPM = ALPHA_RPM * currentRPM + (1 - ALPHA_RPM) * filteredRPM;
 
-  double rpm_dot = (filteredRPM - previousRPM) / SAMPLE_TIME;
+  double rpm_dot = (currentRPM - previousRPM) / SAMPLE_TIME;
 
   filteredDot = ALPHA_DOT * rpm_dot + (1 - ALPHA_DOT) * filteredDot;
 
@@ -293,7 +295,7 @@ void CanInterface::run() {
     }
 
     // Sleep for a short duration to prevent busy-waiting
-    std ::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std ::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
 }
 

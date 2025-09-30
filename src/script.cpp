@@ -219,7 +219,7 @@ void EMAFilter::filterValues(int currentRPM) {
 
   filteredDDot = ALPHA_DDOT * rpm_ddot + (1 - ALPHA_DDOT) * filteredDDot;
 
-  setPreviousRPM(filteredRPM);
+  setPreviousRPM(currentRPM);
   setPreviousDot(filteredDot);
 }
 

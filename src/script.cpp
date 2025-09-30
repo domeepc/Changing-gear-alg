@@ -237,8 +237,8 @@ class CanInterface {
 };
 
 CanInterface::CanInterface() {
-  predictedRPM = 0.0;
-  upshiftSoundPlayed = false;  // Initialize the flag
+  upshiftSoundPlayed = false;    // Initialize the flag
+  downshiftSoundPlayed = false;  // Initialize the flag
 
   // Initialize CAN connection
   if (!CanBUS.initSocketCAN()) {
@@ -268,10 +268,8 @@ void CanInterface::run() {
 
     setPredictedRPM(EMA.PredictRPM(Config::PREDICTIVE_TIME));
 
-    if (CanBUS.getCurrentRPM() != 0) {
-      std::cout << "Current RPM: " << CanBUS.getCurrentRPM()
-                << " | Predicted RPM: " << getPredictedRPM() << std::endl;
-    }
+    std::cout << "Current RPM: " << CanBUS.getCurrentRPM()
+              << " | Predicted RPM: " << getPredictedRPM() << std::endl;
 
     // Only print and play sound once when threshold is reached
     if (getPredictedRPM() >= Config::MAXIMUM_UPSHIFT_RPM &&

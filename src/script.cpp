@@ -18,9 +18,13 @@ const double MAXIMUM_UPSHIFT_RPM = 13500.0;
 const double MINIMUM_DOWNSHIFT_RPM = 2000.0;
 const double SAMPLE_TIME = 0.05;
 const double ALPHA_RPM = 0.2;
-const double ALPHA_DOT = 0.2;
-const double ALPHA_DDOT = 0.6;
-const double PREDICTIVE_TIME = 0.3;
+const double ALPHA_DOT = 0.4;
+const double ALPHA_DDOT = 0.3;
+const double PREDICTIVE_TIME = 0.25;
+const double MIN_OPERATING_RPM = 1000.0;
+const double ACCELERATION_THRESHOLD = 50.0;
+const double UPSHIFT_HYSTERESIS = 300.0;  // Make hysteresis configurable
+const double DOWNSHIFT_HYSTERESIS = 300.0;
 
 // CAN Configuration
 const char* CAN_INTERFACE = "vcan0";
@@ -53,17 +57,23 @@ class CAN {
 };
 
 void CAN::PlayUpshiftSound() {
-  system(
-      "(speaker-test -t sine -f 800) > /dev/null 2>&1  & pid=$!; sleep 1.0s; "
-      "kill -9 $pid");
-  std::cout << "Playing upshift sound!" << std::endl;
+  int result =
+      system("timeout 1s speaker-test -t sine -f 800 > /dev/null 2>&1 &");
+  if (result != 0) {
+    std::cerr << "Error playing upshift sound" << std::endl;
+  } else {
+    std::cout << "🔴 UPSHIFT!" << std::endl;
+  }
 }
 
 void CAN::PlayDownshiftSound() {
-  system(
-      "(speaker-test -t sine -f 500) > /dev/null 2>&1  & pid=$!; sleep 1.0s; "
-      "kill -9 $pid");
-  std::cout << "Playing downshift sound!" << std::endl;
+  int result =
+      system("timeout 1s speaker-test -t sine -f 500 > /dev/null 2>&1 &");
+  if (result != 0) {
+    std::cerr << "Error playing downshift sound" << std::endl;
+  } else {
+    std::cout << "🔵 DOWNSHIFT!" << std::endl;
+  }
 }
 
 CAN::CAN() {
@@ -149,10 +159,18 @@ double CAN::getCurrentRPM() {
 
   // Check if this is the RPM message we're looking for
   if (frame.can_id == Config::RPM_CAN_ID) {
+    double newRPM = 0.0;
     // Simple 16-bit RPM extraction from first two bytes (big-endian)
     if (frame.can_dlc >= 2) {
       uint16_t rawRPM = (frame.data[0] << 8) | frame.data[1];
-      currentRPM = rawRPM * Config::RPM_SCALE_FACTOR;
+      newRPM = rawRPM * Config::RPM_SCALE_FACTOR;
+    } else if (frame.can_dlc >= 1) {
+      uint8_t rawRPM = frame.data[0];
+      newRPM = rawRPM * Config::RPM_SCALE_FACTOR;
+    }
+
+    if (newRPM >= 0 && newRPM <= 21000) {
+      setCurrentRPM(newRPM);
     }
   }
 
@@ -170,11 +188,8 @@ class EMAFilter {
  public:
   EMAFilter();
   double PredictRPM(double dt);
-  double getFilteredRPM() { return filteredRPM; }
-  void setPreviousRPM(double rpm) { previousRPM = rpm; }
-  void setPreviousDot(double dot) { previousDot = dot; }
   double getFilteredDDot() { return filteredDDot; }
-  void filterValues(int currentRPM);
+  void filterValues(double currentRPM);
 };
 
 EMAFilter::EMAFilter() {
@@ -192,7 +207,7 @@ double EMAFilter::PredictRPM(double dt) {
   return filteredRPM + filteredDot * dt + 0.5 * filteredDDot * (dt * dt);
 }
 
-void EMAFilter::filterValues(int currentRPM) {
+void EMAFilter::filterValues(double currentRPM) {
   using namespace Config;
 
   if (!initialized && currentRPM > 0) {
@@ -219,17 +234,19 @@ void EMAFilter::filterValues(int currentRPM) {
 
   filteredDDot = ALPHA_DDOT * rpm_ddot + (1 - ALPHA_DDOT) * filteredDDot;
 
-  setPreviousRPM(filteredRPM);
-  setPreviousDot(filteredDot);
+  previousRPM = filteredRPM;
+  previousDot = filteredDot;
 }
 
 class CanInterface {
   CAN CanBUS;
   EMAFilter EMA;
   double predictedRPM;
-  bool upshiftSoundPlayed;  // Flag to track if upshift sound has been played
-  bool
-      downshiftSoundPlayed;  // Flag to track if downshift sound has been played
+  bool upshiftSoundPlayed;    // Flag to track if upshift sound has been
+                              // played
+  bool downshiftSoundPlayed;  // Flag to track if downshift sound has been
+                              // played
+  bool engineRunning;
 
  public:
   CanInterface();
@@ -239,12 +256,15 @@ class CanInterface {
 };
 
 CanInterface::CanInterface() {
+  predictedRPM = 0.0;            // Initialize predicted RPM
   upshiftSoundPlayed = false;    // Initialize the flag
   downshiftSoundPlayed = false;  // Initialize the flag
+  engineRunning = false;         // Initialize engine running state
 
   // Initialize CAN connection
   if (!CanBUS.initSocketCAN()) {
     std::cerr << "Failed to initialize SocketCAN." << std::endl;
+    exit(EXIT_FAILURE);
   }
 }
 
@@ -252,6 +272,8 @@ void CanInterface::run() {
   std::cout << "Starting CAN interface" << std::endl;
 
   auto lastSampleTime = std::chrono::steady_clock::now();
+  int sampleCount = 0;
+  const int MIN_SAMPLES = 5;
 
   while (true) {
     auto currentTime = std::chrono::steady_clock::now();
@@ -263,39 +285,59 @@ void CanInterface::run() {
     if (timeSinceLastSample >= Config::SAMPLE_TIME * 1000) {
       // Read current RPM from CAN bus and filter the values
       EMA.filterValues(CanBUS.getCurrentRPM());
-
+      sampleCount++;
       // Update last sample time
       lastSampleTime = currentTime;
     }
 
-    setPredictedRPM(EMA.PredictRPM(Config::PREDICTIVE_TIME));
+    if (!engineRunning &&
+        CanBUS.getCurrentRPM() > Config::MINIMUM_DOWNSHIFT_RPM) {
+      engineRunning = true;
+      std::cout << "Engine started" << std::endl;
+    }
+
+    if (sampleCount >= MIN_SAMPLES) {
+      setPredictedRPM(EMA.PredictRPM(Config::PREDICTIVE_TIME));
+
+      double accelerationMagnitude = std::abs(EMA.getFilteredDDot());
+
+      if (engineRunning) {
+        // Only print and play sound once when threshold is reached
+        if (getPredictedRPM() >= Config::MAXIMUM_UPSHIFT_RPM &&
+            !upshiftSoundPlayed && EMA.getFilteredDDot() > 0 &&
+            accelerationMagnitude > Config::ACCELERATION_THRESHOLD &&
+            CanBUS.getCurrentRPM() > Config::MIN_OPERATING_RPM) {
+          CanBUS.PlayUpshiftSound();
+          upshiftSoundPlayed = true;  // Set flag to prevent repeated output
+        } else if (getPredictedRPM() <= Config::MINIMUM_DOWNSHIFT_RPM &&
+                   !downshiftSoundPlayed && EMA.getFilteredDDot() < 0 &&
+                   accelerationMagnitude > Config::ACCELERATION_THRESHOLD &&
+                   CanBUS.getCurrentRPM() > Config::MIN_OPERATING_RPM) {
+          CanBUS.PlayDownshiftSound();
+          downshiftSoundPlayed = true;  // Set flag to prevent repeated output
+        }
+      }
+    } else {
+      setPredictedRPM(CanBUS.getCurrentRPM());
+    }
 
     std::cout << "Current RPM: " << CanBUS.getCurrentRPM()
               << " | Predicted RPM: " << getPredictedRPM() << std::endl;
 
-    // Only print and play sound once when threshold is reached
-    if (getPredictedRPM() >= Config::MAXIMUM_UPSHIFT_RPM &&
-        !upshiftSoundPlayed && EMA.getFilteredDDot() > 0) {
-      CanBUS.PlayUpshiftSound();
-      upshiftSoundPlayed = true;  // Set flag to prevent repeated output
-    } else if (getPredictedRPM() <= Config::MINIMUM_DOWNSHIFT_RPM &&
-               !downshiftSoundPlayed && EMA.getFilteredDDot() < 0) {
-      CanBUS.PlayDownshiftSound();
-      downshiftSoundPlayed = true;  // Set flag to prevent repeated output
-    }
-
     // Reset flag when RPM drops below threshold (optional - for multiple
     // upshifts)
-    if (getPredictedRPM() < Config::MAXIMUM_UPSHIFT_RPM) {
+    if (getPredictedRPM() <
+        Config::MAXIMUM_UPSHIFT_RPM - Config::UPSHIFT_HYSTERESIS) {
       upshiftSoundPlayed = false;
     }
 
-    if (getPredictedRPM() > Config::MINIMUM_DOWNSHIFT_RPM) {
+    if (getPredictedRPM() >
+        Config::MINIMUM_DOWNSHIFT_RPM + Config::DOWNSHIFT_HYSTERESIS) {
       downshiftSoundPlayed = false;
     }
 
     // Sleep for a short duration to prevent busy-waiting
-    std ::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
 }
 

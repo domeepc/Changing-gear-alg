@@ -16,11 +16,11 @@
 namespace Config {
 const double MAXIMUM_UPSHIFT_RPM = 13500.0;
 const double MINIMUM_DOWNSHIFT_RPM = 2000.0;
-const double SAMPLE_TIME = 0.3;
-const double ALPHA_RPM = 0.9;
-const double ALPHA_DOT = 0.8;
+const double SAMPLE_TIME = 0.05;
+const double ALPHA_RPM = 0.2;
+const double ALPHA_DOT = 0.2;
 const double ALPHA_DDOT = 0.6;
-const double PREDICTIVE_TIME = 0.6;
+const double PREDICTIVE_TIME = 0.3;
 
 // CAN Configuration
 const char* CAN_INTERFACE = "vcan0";
@@ -219,7 +219,7 @@ void EMAFilter::filterValues(int currentRPM) {
 
   filteredDDot = ALPHA_DDOT * rpm_ddot + (1 - ALPHA_DDOT) * filteredDDot;
 
-  setPreviousRPM(currentRPM);
+  setPreviousRPM(filteredRPM);
   setPreviousDot(filteredDot);
 }
 

@@ -1,20 +1,21 @@
 #
-# Not finished, doesn't predict RPM correctly
-# Need to add sound playing capabilities
-# Add downshift check
-#
+# PYTHON SCRIPT FOR PREDICTING RPM FOR GEAR SHIFTING IN  RACING MOTORCYCLE
+# 
+
 import can
 import time
-#import os
 import subprocess
+
 # ------------------------
 # Constants
 # ------------------------
+
 UPSHIFT_THRESHOLD = 13500
 DOWNSHIFT_THRESHOLD = 2000
-CAN_ID_FRAME = 0x123
-SAMPLE_TIME = 0.05      # Reads can message every 50ms
-PREDICTION_TIME = 0.3   # Prediction time aka time to look into future (driver reaction time + mechanical delay = 300ms)
+CAN_ID_FRAME = 0x123    
+SAMPLE_TIME = 0.05      # Every 50ms it takes rpm and calculates the derivatives of said rpm value
+PREDICTION_TIME = 0.3   # Prediction time aka how far into the future should the program predict
+                        # (driver reaction time + mechanical delay = 300ms)
 
 # EMA smoothing factors
 alpha_rpm = 0.2

@@ -28,7 +28,7 @@ const double DOWNSHIFT_HYSTERESIS = 300.0;
 
 // CAN Configuration
 const char* CAN_INTERFACE = "vcan0";
-const canid_t RPM_CAN_ID = 0x123;
+const canid_t RPM_CAN_ID = 0x405;
 const double RPM_SCALE_FACTOR = 1.0;
 
 }  // namespace Config

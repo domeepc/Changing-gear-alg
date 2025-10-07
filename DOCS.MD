@@ -105,3 +105,14 @@ void FilterValues():
 > [!WARNING]
 > This is just a pseudocode, it is not meant to be run as is. It is just to
 > explain the logic behind the program. The actual implementation is done in python and cpp
+
+## Python requirements
+
+> [!NOTE]
+> The program needs pysocks python package to work with CAN bus
+
+Command to install it:
+
+```bash
+pip install python-socks
+```

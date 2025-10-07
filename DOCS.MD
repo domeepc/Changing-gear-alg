@@ -109,10 +109,10 @@ void FilterValues():
 ## Python requirements
 
 > [!NOTE]
-> The program needs pysocks python package to work with CAN bus
+> The program needs sox python package to work with CAN bus
 
 Command to install it:
 
 ```bash
-pip install python-socks
+pip install sox
 ```

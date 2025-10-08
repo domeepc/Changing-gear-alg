@@ -162,8 +162,7 @@ void CAN::updateCanData() {
     std::cerr << "Incomplete CAN frame received" << std::endl;
     return;
   }
-
-  if (frame.can_id == Config::RPM_CAN_ID) {
+  else if (frame.can_id == Config::RPM_CAN_ID) {
     double newRPM = 0.0;
     // Simple 16-bit RPM extraction from first two bytes (big-endian)
     if (frame.can_dlc >= 2) {
@@ -178,13 +177,13 @@ void CAN::updateCanData() {
       setCurrentRPM(newRPM);
     }
   } else if (frame.can_id == Config::GEAR_CAN_ID) {
-    int newGear = -1;  // Default to neutral or invalid gear
+    int newGear = 0;  // Default to neutral or invalid gear
     if (frame.can_dlc >= 6) {
       uint16_t rawGear = (frame.data[4] << 8) | frame.data[5];
       newGear = static_cast<int>(rawGear * Config::GEAR_SCALE_FACTOR);
     }
 
-    if (newGear >= -1 && newGear <= 6) {  // Assuming gears -1 (R) to 6
+    if (newGear >= -1 && newGear <= 5) {  // Assuming gears -1 (R) to 6
       setCurrentGear(newGear);
     } else
       std::cerr << "Received invalid gear value: " << newGear << std::endl;

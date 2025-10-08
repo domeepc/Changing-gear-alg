@@ -9,6 +9,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <thread>
@@ -25,11 +26,14 @@ const double MIN_OPERATING_RPM = 1000.0;
 const double ACCELERATION_THRESHOLD = 50.0;
 const double UPSHIFT_HYSTERESIS = 300.0;  // Make hysteresis configurable
 const double DOWNSHIFT_HYSTERESIS = 300.0;
+const double UPSHIFT_COOLDOWN_TIME = 0.5;
 
 // CAN Configuration
 const char* CAN_INTERFACE = "vcan0";
 const canid_t RPM_CAN_ID = 0x405;
 const double RPM_SCALE_FACTOR = 1.0;
+const canid_t GEAR_CAN_ID = 0x402;
+const double GEAR_SCALE_FACTOR = 1.0;
 
 }  // namespace Config
 
@@ -37,6 +41,7 @@ class CAN {
  private:
   double currentRPM;
   int socketFd;
+  int currentGear;
   struct sockaddr_can addr;
   struct ifreq ifr;
   bool isConnected;
@@ -48,12 +53,15 @@ class CAN {
   void closeSocketCAN();
   void PlayUpshiftSound();
   void PlayDownshiftSound();
+  void updateCanData();
 
   // Getters
-  double getCurrentRPM();
+  double getCurrentRPM() { return currentRPM; };
+  int getCurrentGear() { return currentGear; };
 
   // Setters
   void setCurrentRPM(double rpm) { currentRPM = rpm; }
+  void setCurrentGear(int gear) { currentGear = gear; }
 };
 
 void CAN::PlayUpshiftSound() {
@@ -79,6 +87,7 @@ void CAN::PlayDownshiftSound() {
 CAN::CAN() {
   currentRPM = 0.0;
   socketFd = -1;
+  currentGear = 0;
   isConnected = false;
   memset(&addr, 0, sizeof(addr));
   memset(&ifr, 0, sizeof(ifr));
@@ -133,31 +142,27 @@ void CAN::closeSocketCAN() {
   isConnected = false;
 }
 
-double CAN::getCurrentRPM() {
-  if (!isConnected) {
-    return currentRPM;
-  }
+void CAN::updateCanData() {
+  if (!isConnected) return;
 
   struct can_frame frame;
   ssize_t nbytes = read(socketFd, &frame, sizeof(struct can_frame));
 
   if (nbytes < 0) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      // No data available (non-blocking mode)
-      return currentRPM;  // Return cached value
-    } else {
+    if (errno == EAGAIN || errno == EWOULDBLOCK)
+      return;
+    else {
       std::cerr << "Error reading from CAN socket: " << strerror(errno)
                 << std::endl;
-      return currentRPM;
+      return;
     }
   }
 
   if (nbytes < sizeof(struct can_frame)) {
     std::cerr << "Incomplete CAN frame received" << std::endl;
-    return currentRPM;
+    return;
   }
 
-  // Check if this is the RPM message we're looking for
   if (frame.can_id == Config::RPM_CAN_ID) {
     double newRPM = 0.0;
     // Simple 16-bit RPM extraction from first two bytes (big-endian)
@@ -172,10 +177,20 @@ double CAN::getCurrentRPM() {
     if (newRPM >= 0 && newRPM <= 21000) {
       setCurrentRPM(newRPM);
     }
-  }
+  } else if (frame.can_id == Config::GEAR_CAN_ID) {
+    int newGear = -1;  // Default to neutral or invalid gear
+    if (frame.can_dlc >= 6) {
+      uint16_t rawGear = (frame.data[4] << 8) | frame.data[5];
+      newGear = static_cast<int>(rawGear * Config::GEAR_SCALE_FACTOR);
+    }
 
-  return currentRPM;
+    if (newGear >= -1 && newGear <= 6) {  // Assuming gears -1 (R) to 6
+      setCurrentGear(newGear);
+    } else
+      std::cerr << "Received invalid gear value: " << newGear << std::endl;
+  }
 }
+
 class EMAFilter {
  private:
   double filteredRPM;
@@ -247,6 +262,11 @@ class CanInterface {
   bool downshiftSoundPlayed;  // Flag to track if downshift sound has been
                               // played
   bool engineRunning;
+  std::chrono::steady_clock::time_point
+      lastDownshiftTime;  // Time of last downshift
+  int previousGear;
+  std::chrono::steady_clock::time_point lastGearChangeTime;
+  bool upshiftCooldownActive;
 
  public:
   CanInterface();
@@ -260,11 +280,14 @@ CanInterface::CanInterface() {
   upshiftSoundPlayed = false;    // Initialize the flag
   downshiftSoundPlayed = false;  // Initialize the flag
   engineRunning = false;         // Initialize engine running state
+  previousGear = 0;
+  upshiftCooldownActive = false;
+  lastGearChangeTime = std::chrono::steady_clock::now();
 
   // Initialize CAN connection
   if (!CanBUS.initSocketCAN()) {
     std::cerr << "Failed to initialize SocketCAN." << std::endl;
-    exit(EXIT_FAILURE);
+    std::exit(EXIT_FAILURE);
   }
 }
 
@@ -277,6 +300,9 @@ void CanInterface::run() {
 
   while (true) {
     auto currentTime = std::chrono::steady_clock::now();
+
+    CanBUS.updateCanData();
+
     auto timeSinceLastSample =
         std::chrono::duration_cast<std::chrono::milliseconds>(currentTime -
                                                               lastSampleTime)
@@ -285,9 +311,35 @@ void CanInterface::run() {
     if (timeSinceLastSample >= Config::SAMPLE_TIME * 1000) {
       // Read current RPM from CAN bus and filter the values
       EMA.filterValues(CanBUS.getCurrentRPM());
+      int currentGear = CanBUS.getCurrentGear();
+
+      if (currentGear != previousGear && previousGear != 0) {
+        if (currentGear < previousGear) {
+          std::cout << "Gear: " << previousGear << " -> " << currentGear
+                    << std::endl;
+          upshiftCooldownActive = true;
+          lastGearChangeTime = currentTime;
+        } else if (currentGear > previousGear) {
+          std::cout << "Gear: " << previousGear << " -> " << currentGear
+                    << std::endl;
+        }
+        previousGear = currentGear;
+      } else if (previousGear == 0 && currentGear > 0) {
+        previousGear = currentGear;
+      }
+
       sampleCount++;
-      // Update last sample time
       lastSampleTime = currentTime;
+    }
+
+    if (upshiftCooldownActive) {
+      auto timeSinceGearChange =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              currentTime - lastGearChangeTime)
+              .count();
+      if (timeSinceGearChange >= Config::UPSHIFT_COOLDOWN_TIME * 1000) {
+        upshiftCooldownActive = false;
+      }
     }
 
     if (!engineRunning &&
@@ -304,17 +356,20 @@ void CanInterface::run() {
       if (engineRunning) {
         // Only print and play sound once when threshold is reached
         if (getPredictedRPM() >= Config::MAXIMUM_UPSHIFT_RPM &&
-            !upshiftSoundPlayed && EMA.getFilteredDDot() > 0 &&
+            EMA.getFilteredDDot() > 0 && !upshiftSoundPlayed &&
+            !upshiftCooldownActive &&
             accelerationMagnitude > Config::ACCELERATION_THRESHOLD &&
             CanBUS.getCurrentRPM() > Config::MIN_OPERATING_RPM) {
           CanBUS.PlayUpshiftSound();
           upshiftSoundPlayed = true;  // Set flag to prevent repeated output
+
         } else if (getPredictedRPM() <= Config::MINIMUM_DOWNSHIFT_RPM &&
                    !downshiftSoundPlayed && EMA.getFilteredDDot() < 0 &&
                    accelerationMagnitude > Config::ACCELERATION_THRESHOLD &&
                    CanBUS.getCurrentRPM() > Config::MIN_OPERATING_RPM) {
           CanBUS.PlayDownshiftSound();
           downshiftSoundPlayed = true;  // Set flag to prevent repeated output
+          lastDownshiftTime = std::chrono::steady_clock::now();
         }
       }
     } else {
@@ -322,7 +377,10 @@ void CanInterface::run() {
     }
 
     std::cout << "Current RPM: " << CanBUS.getCurrentRPM()
-              << " | Predicted RPM: " << getPredictedRPM() << std::endl;
+              << " | Predicted RPM: " << getPredictedRPM()
+              << " | Gear: " << CanBUS.getCurrentGear()
+              << " | Cooldown Active: "
+              << (upshiftCooldownActive ? "Yes" : "No") << std::endl;
 
     // Reset flag when RPM drops below threshold (optional - for multiple
     // upshifts)
@@ -337,7 +395,7 @@ void CanInterface::run() {
     }
 
     // Sleep for a short duration to prevent busy-waiting
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 }
 

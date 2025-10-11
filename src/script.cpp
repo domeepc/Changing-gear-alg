@@ -15,7 +15,7 @@
 #include <thread>
 
 namespace Config {
-const double MAXIMUM_UPSHIFT_RPM = 13500.0;
+const double MAXIMUM_UPSHIFT_RPM = 4000.0;
 const double MINIMUM_DOWNSHIFT_RPM = 2000.0;
 const double SAMPLE_TIME = 0.05;
 const double ALPHA_RPM = 0.2;
@@ -74,7 +74,7 @@ void CAN::PlayUpshiftSound() {
   }
 }
 
-void CAN::PlayDownshiftSound() {
+/*void CAN::PlayDownshiftSound() {
   int result =
       system("timeout 1s speaker-test -t sine -f 500 > /dev/null 2>&1 &");
   if (result != 0) {
@@ -82,7 +82,7 @@ void CAN::PlayDownshiftSound() {
   } else {
     std::cout << "🔵 DOWNSHIFT!" << std::endl;
   }
-}
+}*/
 
 CAN::CAN() {
   currentRPM = 0.0;
@@ -312,15 +312,17 @@ void CanInterface::run() {
       EMA.filterValues(CanBUS.getCurrentRPM());
       int currentGear = CanBUS.getCurrentGear();
 
-      if (currentGear != previousGear && previousGear != 0) {
+      if (currentGear != previousGear) {
         if (currentGear < previousGear) {
           std::cout << "Gear: " << previousGear << " -> " << currentGear
                     << std::endl;
-          upshiftCooldownActive = true;
+         
           lastGearChangeTime = currentTime;
         } else if (currentGear > previousGear) {
           std::cout << "Gear: " << previousGear << " -> " << currentGear
                     << std::endl;
+                     upshiftCooldownActive = true;
+          lastGearChangeTime = currentTime;
         }
         previousGear = currentGear;
       } else if (previousGear == 0 && currentGear > 0) {
@@ -341,18 +343,18 @@ void CanInterface::run() {
       }
     }
 
-    if (!engineRunning &&
+    /*if (!engineRunning &&
         CanBUS.getCurrentRPM() > Config::MINIMUM_DOWNSHIFT_RPM) {
       engineRunning = true;
       std::cout << "Engine started" << std::endl;
-    }
+    }*/
 
     if (sampleCount >= MIN_SAMPLES) {
       setPredictedRPM(EMA.PredictRPM(Config::PREDICTIVE_TIME));
 
       double accelerationMagnitude = std::abs(EMA.getFilteredDDot());
 
-      if (engineRunning) {
+
         // Only print and play sound once when threshold is reached
         if (getPredictedRPM() >= Config::MAXIMUM_UPSHIFT_RPM &&
             EMA.getFilteredDDot() > 0 && !upshiftSoundPlayed &&
@@ -362,15 +364,15 @@ void CanInterface::run() {
           CanBUS.PlayUpshiftSound();
           upshiftSoundPlayed = true;  // Set flag to prevent repeated output
 
-        } else if (getPredictedRPM() <= Config::MINIMUM_DOWNSHIFT_RPM &&
+        } /*else if (getPredictedRPM() <= Config::MINIMUM_DOWNSHIFT_RPM &&
                    !downshiftSoundPlayed && EMA.getFilteredDDot() < 0 &&
                    accelerationMagnitude > Config::ACCELERATION_THRESHOLD &&
                    CanBUS.getCurrentRPM() > Config::MIN_OPERATING_RPM) {
           CanBUS.PlayDownshiftSound();
           downshiftSoundPlayed = true;  // Set flag to prevent repeated output
           lastDownshiftTime = std::chrono::steady_clock::now();
-        }
-      }
+        }*/
+      
     } else {
       setPredictedRPM(CanBUS.getCurrentRPM());
     }
@@ -387,11 +389,10 @@ void CanInterface::run() {
         Config::MAXIMUM_UPSHIFT_RPM - Config::UPSHIFT_HYSTERESIS) {
       upshiftSoundPlayed = false;
     }
-
-    if (getPredictedRPM() >
+/*    if (getPredictedRPM() >
         Config::MINIMUM_DOWNSHIFT_RPM + Config::DOWNSHIFT_HYSTERESIS) {
       downshiftSoundPlayed = false;
-    }
+    }*/
 
     // Sleep for a short duration to prevent busy-waiting
     std::this_thread::sleep_for(std::chrono::milliseconds(10));

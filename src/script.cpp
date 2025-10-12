@@ -68,7 +68,7 @@ void CAN::PlayUpshiftSound() {
  int result = system("play -n synth 1 sine 1000 vol 0.5 >/dev/null 2>&1 &");
    if (result != 0) {
     std::cerr << "Error playing upshift sound" << std::endl;
-  } else if(result = 1) {
+  } else {
     std::cout << "🔴 UPSHIFT!" << std::endl;
   }
 }

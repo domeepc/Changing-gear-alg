@@ -15,7 +15,7 @@
 #include <thread>
 
 namespace Config {
-const double MAXIMUM_UPSHIFT_RPM = 4000.0;
+const double MAXIMUM_UPSHIFT_RPM = 13500.0;
 const double MINIMUM_DOWNSHIFT_RPM = 2000.0;
 const double SAMPLE_TIME = 0.05;
 const double ALPHA_RPM = 0.2;
@@ -65,11 +65,10 @@ class CAN {
 };
 
 void CAN::PlayUpshiftSound() {
-  int result =
-      system("timeout 1s speaker-test -t sine -f 800 > /dev/null 2>&1 &");
-  if (result != 0) {
+ int result = system("play -n synth 1 sine 1000 vol 0.5 >/dev/null 2>&1 &");
+   if (result != 0) {
     std::cerr << "Error playing upshift sound" << std::endl;
-  } else {
+  } else if(result = 1) {
     std::cout << "🔴 UPSHIFT!" << std::endl;
   }
 }
@@ -258,14 +257,16 @@ class CanInterface {
   double predictedRPM;
   bool upshiftSoundPlayed;    // Flag to track if upshift sound has been
                               // played
-  bool downshiftSoundPlayed;  // Flag to track if downshift sound has been
+ bool downshiftSoundPlayed;  // Flag to track if downshift sound has been
                               // played
-  bool engineRunning;
+ bool engineRunning;
   std::chrono::steady_clock::time_point
       lastDownshiftTime;  // Time of last downshift
   int previousGear;
   std::chrono::steady_clock::time_point lastGearChangeTime;
   bool upshiftCooldownActive;
+  std::chrono::steady_clock::time_point lastUpshiftPlayTime;
+double upshiftPlayTimeoutSeconds; // e.g. 3.0
 
  public:
   CanInterface();
@@ -282,6 +283,8 @@ CanInterface::CanInterface() {
   previousGear = 0;
   upshiftCooldownActive = false;
   lastGearChangeTime = std::chrono::steady_clock::now();
+   lastUpshiftPlayTime = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+  upshiftPlayTimeoutSeconds = 1.0; // force reset after 3 seconds max
 
   // Initialize CAN connection
   if (!CanBUS.initSocketCAN()) {
@@ -316,12 +319,12 @@ void CanInterface::run() {
         if (currentGear < previousGear) {
           std::cout << "Gear: " << previousGear << " -> " << currentGear
                     << std::endl;
-         
+          upshiftCooldownActive = true;
           lastGearChangeTime = currentTime;
         } else if (currentGear > previousGear) {
           std::cout << "Gear: " << previousGear << " -> " << currentGear
                     << std::endl;
-                     upshiftCooldownActive = true;
+                    
           lastGearChangeTime = currentTime;
         }
         previousGear = currentGear;
@@ -352,6 +355,12 @@ void CanInterface::run() {
     if (sampleCount >= MIN_SAMPLES) {
       setPredictedRPM(EMA.PredictRPM(Config::PREDICTIVE_TIME));
 
+      if(getPredictedRPM() < 1){
+        setPredictedRPM(0);
+      }else if(getPredictedRPM() > 15000){
+        setPredictedRPM(15000);
+      }
+
       double accelerationMagnitude = std::abs(EMA.getFilteredDDot());
 
 
@@ -359,11 +368,9 @@ void CanInterface::run() {
         if (getPredictedRPM() >= Config::MAXIMUM_UPSHIFT_RPM &&
             EMA.getFilteredDDot() > 0 && !upshiftSoundPlayed &&
             !upshiftCooldownActive &&
-            accelerationMagnitude > Config::ACCELERATION_THRESHOLD &&
-            CanBUS.getCurrentRPM() > Config::MIN_OPERATING_RPM) {
+            accelerationMagnitude > Config::ACCELERATION_THRESHOLD) {
+           upshiftSoundPlayed = true;  // Set flag to prevent repeated output
           CanBUS.PlayUpshiftSound();
-          upshiftSoundPlayed = true;  // Set flag to prevent repeated output
-
         } /*else if (getPredictedRPM() <= Config::MINIMUM_DOWNSHIFT_RPM &&
                    !downshiftSoundPlayed && EMA.getFilteredDDot() < 0 &&
                    accelerationMagnitude > Config::ACCELERATION_THRESHOLD &&

@@ -52,8 +52,8 @@ Za kraj potrebno je postaviti komunikaciju preko CAN interface-a. To radimo pomo
 sudo nano ~/.bashrc
 # dodati sljedeće linije na kraj datoteke:
 sudo modprobe can-gw
-sudo can-gw -A -s vcan0 -d can0 -e
-sudo can-gw -A -s can0 -d vcan0 -e
+sudo cangw -A -s vcan0 -d can0 -e
+sudo cangw -A -s can0 -d vcan0 -e
 ```
 
 Nakon što smo sve to napravili potrebno je još u raspi-config uključiti serijski port.
